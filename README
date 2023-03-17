@@ -1,0 +1,12 @@
+
+infra-microbenchmarks
+=====================
+
+
+SPDX-FileCopyrightText: Copyright 2019-2023 Arm Limited and/or its affiliates <open-source-office@arm.com>
+SPDX-License-Identifier: BSD-3-Clause
+
+
+loaded-latency
+	Measures memory latency against a controlled amount of concurrent
+	memory bandwidth in a single measurement.
