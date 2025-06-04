@@ -47,7 +47,7 @@ static void * bw_thread_start(void *arg);
 static void * lat_thread_start(void *arg);
 static unsigned long max(unsigned long x, unsigned long y);
 static unsigned long min(unsigned long x, unsigned long y);
-static unsigned long estimate_hwclock_freq(long cpu_num);
+unsigned long estimate_hwclock_freq(long cpu_num, size_t n, int verbose, struct timeval target_measurement_duration);
 
 
 // default parameters
@@ -112,7 +112,10 @@ int main(int argc, char *argv[]) {
     handle_args(argc, argv, &args);
 
     if (args.estimate_hwclock_freq_cpu != -1) {
-        unsigned long freq = estimate_hwclock_freq(args.estimate_hwclock_freq_cpu);
+        const unsigned long num_samples = 10;
+        const struct timeval target_measurement_duration = { .tv_sec = 0, .tv_usec = 100000 };
+        const int verbose = 1;
+        unsigned long freq = estimate_hwclock_freq(args.estimate_hwclock_freq_cpu, num_samples, verbose, target_measurement_duration);
         printf("the estimated hwclock frequency on CPU %ld in Hz is %lu\n", args.estimate_hwclock_freq_cpu, freq);
         return 0;
     }
@@ -715,13 +718,18 @@ static unsigned long min(unsigned long x, unsigned long y) {
     return y;
 }
 
-static unsigned long estimate_hwclock_freq(long cpu_num) {
+unsigned long estimate_hwclock_freq(long cpu_num, size_t n, int verbose, struct timeval target_measurement_duration) {
 
-    unsigned long n = 10;
     unsigned long hwcounter_start, hwcounter_stop, hwcounter_diff;
     unsigned long hwcounter_average = 0;
 
-    printf("estimating hwclock frequency on cpu %ld for %lu iterations\n", cpu_num, n);
+    if (n == 0) {
+        printf("estimate_hwclock_freq_fast: n = 0\n");
+        exit(-1);
+    }
+
+    if (verbose)
+        printf("estimating hwclock frequency on cpu %ld for %lu iterations\n", cpu_num, n);
 
     cpu_set_t cpu_mask;
 
@@ -732,26 +740,62 @@ static unsigned long estimate_hwclock_freq(long cpu_num) {
         handle_error("sched_setaffinity");
     }
 
-    for (unsigned long i = 0; i < n; i++) {
+    unsigned long hwcounter_freq_high = 0;
+    unsigned long hwcounter_freq_low = -1;
 
-        struct timeval ts_a, ts_b, ts_diff;
+    for (unsigned long i = 0; i < n + 2; i++) {
 
-        hwcounter_start = read_hwcounter();
-        gettimeofday(&ts_a, NULL);
+        struct timeval ts_a, ts_b, ts_target, ts_diff;
 
         do {
-            gettimeofday(&ts_b, NULL);
-            timersub(&ts_b, &ts_a, &ts_diff);
-        } while (ts_diff.tv_sec < 1);
+            hwcounter_start = read_hwcounter();
+            gettimeofday(&ts_a, NULL);
 
-        hwcounter_stop = read_hwcounter();
+            timeradd(&ts_a, &target_measurement_duration, &ts_target);
+
+            do {
+                gettimeofday(&ts_b, NULL);
+            } while (timercmp(&ts_b, &ts_target, < ));
+
+            hwcounter_stop = read_hwcounter();
+
+            timersub(&ts_b, &ts_target, &ts_diff);
+
+            if (0)
+                printf("ts_diff = %lu.%06lu\n", ts_diff.tv_sec, ts_diff.tv_usec);
+
+        } while (ts_diff.tv_sec > 0 || ts_diff.tv_usec > 100);
 
         hwcounter_diff = hwcounter_stop - hwcounter_start;
 
-        printf("hwcounter_diff = %lu\n", hwcounter_diff);
+        timersub(&ts_b, &ts_a, &ts_diff);
 
-        hwcounter_average += hwcounter_diff;
+        unsigned long hwcounter_freq =
+                    hwcounter_diff / (ts_diff.tv_sec + ts_diff.tv_usec * 0.000001);
+
+        if (verbose) {
+            printf("hwcounter_diff = %lu, scaled = %lu\n",
+                    hwcounter_diff, hwcounter_freq);
+        }
+
+        hwcounter_average += hwcounter_freq;
+
+        if (hwcounter_freq > hwcounter_freq_high) {
+            hwcounter_freq_high = hwcounter_freq;
+        }
+
+        if (hwcounter_freq < hwcounter_freq_low) {
+            hwcounter_freq_low = hwcounter_freq;
+        }
+
     }
+
+    if (verbose) {
+        printf("dropped hwcounter_freq_low = %lu\n", hwcounter_freq_low);
+        printf("dropped hwcounter_freq_high = %lu\n", hwcounter_freq_high);
+    }
+    hwcounter_average -= hwcounter_freq_low;
+    hwcounter_average -= hwcounter_freq_high;
 
     hwcounter_average /= (double) n;
 
