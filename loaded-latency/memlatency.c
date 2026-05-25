@@ -31,18 +31,182 @@
 #include "alloc.h"
 #include "memlatency.h"
 
+#include <stdint.h>
+
 /* lat_initialize can be called from main.c for shared memory */
+/*
+ * LAT_CHAIN_PASSES — number of independent random passes through the
+ * buffer concatenated head-to-tail to form the mode-2 pointer chain.
+ *
+ * Algorithm (make_multipass_chain):
+ *   Each pass j produces one Hamiltonian cycle through all cachelines
+ *   using slot j of the per-cacheline pointer array. The cacheline
+ *   visitation order within each pass is an independent Fisher-Yates
+ *   shuffle. Passes are concatenated so the last pointer of pass j
+ *   links to the first pointer of pass j+1, and the last pointer of
+ *   pass (PASSES-1) wraps to the first pointer of pass 0. Total
+ *   chain length = cacheline_count * LAT_CHAIN_PASSES.
+ *
+ */
+#define LAT_CHAIN_PASSES 8
+
+typedef struct ptr_s {
+    struct ptr_s * next;
+} ptr_t;
+
+/*
+ * Header layout of the mode-1 node_t (first field only).
+ * node_t itself is declared inside lat_initialize() because its trailing
+ * pad depends on the runtime cacheline_bytes. node_hdr_t lets helper
+ * functions access ->next without seeing the local typedef.
+ */
+typedef struct {
+    void * next;
+} node_hdr_t;
+
+#define NODE_HDR(base, i, cbytes) \
+    ((node_hdr_t *)((char *)(base) + (i) * (cbytes)))
+
+/*
+ * Generate a random permutation of [0, count) using Fisher-Yates.
+ * Matches mode 1 style: size_t indices, lrand48().
+ */
+static void make_random_order(size_t * index, size_t count) {
+    size_t * selection = malloc(count * sizeof(size_t));
+    if (selection == NULL) {
+        printf("make_random_order: malloc failed for count=%zu\n", count);
+        exit(-1);
+    }
+
+    for (size_t i = 0; i < count; i++) {
+        selection[i] = i;
+    }
+
+    size_t remaining = count;
+    for (size_t i = 0; i < count; i++) {
+        size_t n = (size_t) lrand48() % remaining;
+        index[i] = selection[n];
+        remaining--;
+        selection[n] = selection[remaining];
+    }
+
+    free(selection);
+}
+
+
+/*
+ * Mode 1: pair-swap shuffle.
+ * Build a permutation of stride-aligned cacheline offsets in an
+ * external array (mirroring make_multipass_chain), then wire
+ * node->next pointers by walking it. The nodes carry only ->next.
+ */
+static void ** make_pairswap_chain(void * ptr,
+    size_t cacheline_bytes, size_t cacheline_count, size_t cacheline_stride, int randomize) {
+
+    size_t count = cacheline_count / cacheline_stride;
+    if (count < 2) {
+        printf("make_pairswap_chain: need >=2 stride slots, got %zu\n", count);
+        exit(-1);
+    }
+
+    size_t * order = malloc(count * sizeof(size_t));
+    if (order == NULL) {
+        printf("make_pairswap_chain: malloc failed for count=%zu\n", count);
+        exit(-1);
+    }
+
+    /* Sequential permutation: order[k] = k-th stride-aligned offset */
+    for (size_t k = 0; k < count; k++) {
+        order[k] = k * cacheline_stride;
+    }
+
+    /* Optional shuffle: 10 rounds of random pair swaps on the array */
+    if (randomize) {
+        for (int rounds = 0; rounds < 10; rounds++) {
+            for (size_t k = 0; k < count; k++) {
+                size_t a, b, x;
+                do {
+                    a = (size_t) lrand48() % count;
+                    b = (size_t) lrand48() % count;
+                } while (a == b);
+                x = order[a];
+                order[a] = order[b];
+                order[b] = x;
+            }
+        }
+    }
+
+    /* Wire pointer loop following the permutation */
+    for (size_t k = 0; k < count - 1; k++) {
+        size_t cur  = order[k];
+        size_t next = order[k + 1];
+        NODE_HDR(ptr, cur, cacheline_bytes)->next =
+            &NODE_HDR(ptr, next, cacheline_bytes)->next;
+    }
+    /* Close the cycle */
+    {
+        size_t cur   = order[count - 1];
+        size_t first = order[0];
+        NODE_HDR(ptr, cur, cacheline_bytes)->next =
+            &NODE_HDR(ptr, first, cacheline_bytes)->next;
+    }
+
+    free(order);
+    return (void **) ptr;
+}
+
+/*
+ * Mode 2: build LAT_CHAIN_PASSES independent Hamiltonian cycles,
+ * each using slot j of every cacheline. Cycles are concatenated
+ * head-to-tail to form one closed loop of length
+ * cacheline_count * LAT_CHAIN_PASSES.
+ */
+static void ** make_multipass_chain(void * ptr,
+    size_t cacheline_count, size_t cacheline_bytes) {
+
+    size_t * index = malloc(cacheline_count * sizeof(size_t));
+    if (index == NULL) {
+        printf("make_multipass_chain: malloc failed for count=%zu\n", cacheline_count);
+        exit(-1);
+    }
+
+    char  * base    = (char *) ptr;
+    ptr_t * first   = NULL;
+    ptr_t * current = NULL;
+
+    for (size_t j = 0; j < LAT_CHAIN_PASSES; j++) {
+        make_random_order(index, cacheline_count);
+
+        for (size_t i = 0; i < cacheline_count; i++) {
+            ptr_t * next = (ptr_t *)(base + index[i] * cacheline_bytes + j * sizeof(ptr_t));
+            if (current == NULL) {
+                first = next;
+            } else {
+                current->next = next;
+            }
+            current = next;
+        }
+    }
+
+    /* close the loop */
+    current->next = first;
+
+    free(index);
+    return (void **) first;
+}
 
 void ** lat_initialize(size_t cacheline_bytes,
     size_t cacheline_count, int randomize, int clear_cache, size_t cacheline_stride, int use_hugepages) {
 
-    size_t i;
-
     typedef struct {
-        void * next;
-        size_t order;
-        size_t index;
-        char buf[cacheline_bytes - sizeof(void *) - sizeof(size_t) - sizeof(size_t)];
+        union {
+            void * next;                        /* mode 1: single chain */
+            ptr_t ptrs[LAT_CHAIN_PASSES];   /* mode 2: per-pass chain slots */
+        };
+        char buf[cacheline_bytes
+                 - (sizeof(ptr_t) * LAT_CHAIN_PASSES > sizeof(void *)
+                    ? sizeof(ptr_t) * LAT_CHAIN_PASSES
+                    : sizeof(void *))];
     } node_t;
 
     // check that sizeof(node_t) == cacheline_bytes // XXX: might not be on 32-bit
@@ -59,62 +223,18 @@ void ** lat_initialize(size_t cacheline_bytes,
 
     node_t * p = do_alloc(cacheline_bytes * cacheline_count, use_hugepages, cacheline_bytes);
 
-    // order is the sequence of node_t elements to traverse.  Initialize for sequential order.
-
-    for (i = 0; i < cacheline_count; i++) {
-        p[i].order = i;
+    void ** head;
+    if (randomize == 2) {
+        head = make_multipass_chain(p, cacheline_count, cacheline_bytes);
+    } else {
+        head = make_pairswap_chain(p, cacheline_bytes, cacheline_count, cacheline_stride, randomize);
     }
-
-    // if randomize is used, randomly swap the order values
-
-    if (randomize) {
-        for (int rounds = 0; rounds < 10; rounds++) {
-            for (i = 0; i < cacheline_count; i+= cacheline_stride) {
-                size_t offset_a, offset_b, x;
-
-                do {
-                    offset_a = (lrand48() % (cacheline_count/cacheline_stride)) * cacheline_stride;
-                    offset_b = (lrand48() % (cacheline_count/cacheline_stride)) * cacheline_stride;
-                } while (offset_a == offset_b);
-
-                x = p[offset_a].order;
-                p[offset_a].order = p[offset_b].order;
-                p[offset_b].order = x;
-            }
-        }
-    }
-
-    // create the pointer loop using the ordering table
-
-    for (i = 0; i < cacheline_count - cacheline_stride; i += cacheline_stride) {
-        p[p[i].order].next = &(p[p[i + cacheline_stride].order].next);
-        p[p[i].order].index = i;
-    }
-
-    p[p[i].order].next = &(p[p[0].order].next);
-    p[p[i].order].index = i;
-
-#if 0
-    // print out latency loop pointers for debug
-    printf("by pointer:\n");
-    node_t * pp = (node_t *) ppvoid;
-    for (i = 0; i < cacheline_count; i++) {
-        printf("%zu\tpp=%p pp->next=%p delta=%ld bytes\n", i, pp, pp->next, (long) pp->next - (long) pp );
-        pp = pp->next;
-    }
-
-    printf("by entry:\n");
-    pp = (node_t *) ppvoid;
-    for (i = 0; i < cacheline_count; i++) {
-        printf("pp[%zu]\t= %p, .next=%p\n", i, &(pp[i]), pp[i].next);
-    }
-#endif
 
     if (clear_cache) {
-        __builtin___clear_cache(p, p+cacheline_count);
+        __builtin___clear_cache((char *) p, (char *) p + cacheline_bytes * cacheline_count);
     }
 
-    return (void **) p;
+    return head;
 }
 
 
@@ -232,18 +352,30 @@ void latency_thread (struct lat_thread_info * lat_tinfo) {
 
             size_t this_hwcounter = read_hwcounter();
 
-#if 0
-            typedef struct {
-                void * next;
-                size_t order;
-                size_t index;
-            } partial_node_t;
+#ifdef LAT_DEBUG_CHAIN
+            /*
+             * Chain-walk debug. `p` points at a node's ->next field.
+             * With the new layout there is no stored index/order, so
+             * derive the cacheline index from the buffer base:
+             *   line_base = p & ~(cacheline_bytes - 1)
+             *   idx       = (line_base - mem) / cacheline_bytes
+             *   slot      = (p - line_base) / sizeof(void *)
+             * slot is 0 for mode 1 and 0..LAT_CHAIN_PASSES-1 for mode 2.
+             */
+            uintptr_t pu        = (uintptr_t) p;
+            uintptr_t line_base = pu & ~((uintptr_t) cacheline_bytes - 1);
+            size_t    slot      = (size_t)((pu - line_base) / sizeof(void *));
+            size_t    current_index = (mem != NULL)
+                ? (size_t)(((char *) line_base - (char *) mem) / cacheline_bytes)
+                : (size_t) -1;
 
-            size_t current_index = ((partial_node_t *) p)->index;
-
-            printf("CPU%d LATTHREAD%d: %.6f ns, %.6f cycles, cntvct=0x%08lx cntvct_diff=%lu p=%p index=%zu latency_samples=%zu\n",
-                    cpu, thread_num, x_per_iter, x_per_iter/cycle_time_ns, this_hwcounter,
-                    this_hwcounter - last_hwcounter, p, current_index, latency_samples);
+            printf("CPU%d LATTHREAD%d: %.6f ns, %.6f cycles, "
+                   HWCOUNTER "=0x%08lx " HWCOUNTER "_diff=%lu "
+                   "p=%p line=0x%lx idx=%zu slot=%zu samples=%zu\n",
+                   cpu, thread_num, x_per_iter, x_per_iter / cycle_time_ns,
+                   this_hwcounter, this_hwcounter - last_hwcounter,
+                   (void *) p, (unsigned long) line_base,
+                   current_index, slot, latency_samples);
 #else
             printf("CPU%d LATTHREAD%d: %.6f ns, %.6f cycles\n", cpu, thread_num, x_per_iter, x_per_iter/cycle_time_ns);
 #endif
