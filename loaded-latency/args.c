@@ -109,7 +109,10 @@ static void print_help(void) {
 " -j | --lat-cacheline-stride  count    number of cachelines to skip between loads for latency measurement\n"
 " -o | --lat-offset            count    number of deploads to advance secondary latency threads\n"
 " -c | --lat-clear-cache                clear caches before latency run\n"
-" -r | --lat-randomize                  randomize ordering of dependent loads\n"
+" -r | --lat-randomize                  randomize ordering of dependent loads (mode 1: pair-swap shuffle)\n"
+" -R | --lat-randomize-mode    mode     select randomization mode by number (1, 2, ...)\n"
+"                                       mode 1 = pair-swap shuffle (default for -r)\n"
+"                                       mode 2 = 8-way interleaved Hamiltonian chains\n"
 " -h | --lat-use-hugepages     size     hugepage size to use for latency. Use \"-h help\" to show known sizes\n"
 " -w | --lat-warmup-cpu        cpu_num  on which CPU to warm up latency loop (repeat for additional CPUs)\n"
 " -s | --lat-shared-memory              use the same memory for all latency threads\n"
@@ -169,6 +172,7 @@ void handle_args(int argc, char ** argv, args_t * pargs) {
         {"lat-offset",          required_argument,  0,      'o'},
         {"lat-clear-cache",     no_argument,        0,      'c'},
         {"lat-randomize",       no_argument,        0,      'r'},
+        {"lat-randomize-mode",  required_argument,  0,      'R'},
         {"lat-use-hugepages",   required_argument,  0,      'h'},
         {"lat-warmup-cpu",      required_argument,  0,      'w'},
         {"lat-shared-memory",   no_argument,        0,      's'},
@@ -192,7 +196,7 @@ void handle_args(int argc, char ** argv, args_t * pargs) {
 
     while (1) {
 
-        int c = getopt_long(argc, argv, "D:S:d:Qq:f:t:l:n:e:i:z:j:o:crh:w:su:B:I:L:F:C:H:Z:W", long_options, NULL);
+        int c = getopt_long(argc, argv, "D:S:d:Qq:f:t:l:n:e:i:z:j:o:crR:h:w:su:B:I:L:F:C:H:Z:W", long_options, NULL);
 
         switch (c) {
 
@@ -300,6 +304,14 @@ void handle_args(int argc, char ** argv, args_t * pargs) {
 
             case 'r':  // --lat-randomize
                 pargs->lat_randomize = 1;
+                break;
+
+            case 'R':  // --lat-randomize-mode N
+                pargs->lat_randomize = (int) strtol(optarg, NULL, 0);
+                if (pargs->lat_randomize < 0) {
+                    printf("invalid --lat-randomize-mode value: %s\n", optarg);
+                    exit(-1);
+                }
                 break;
 
             case 'h':  // --lat-use-hugepages hugepage_size_string
