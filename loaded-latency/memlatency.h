@@ -32,7 +32,7 @@ struct lat_thread_info {
 };
 
 void ** lat_initialize(size_t cacheline_bytes,
-        size_t cacheline_count, int randomize, int clear_cache, size_t cachline_stride, int use_hugepages);
+        size_t cacheline_count, size_t randomize, int clear_cache, size_t cachline_stride, int use_hugepages);
 
 void latency_thread (struct lat_thread_info * lat_tinfo);
 

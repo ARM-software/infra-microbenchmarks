@@ -120,6 +120,13 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
+    size_t max_num_hamiltonian_chains = args.lat_cacheline_bytes / sizeof(void *);
+
+    if (args.lat_randomize > max_num_hamiltonian_chains) {
+        printf("ERROR: --lat-randomize chains=%zu exceeds cacheline length --lat-cacheline-bytes=%zu\n",
+            args.lat_randomize, args.lat_cacheline_bytes);
+        exit(-1);
+    }
 
     int num_bw_threads = 0;
     int num_lat_threads = 0;
@@ -217,7 +224,8 @@ int main(int argc, char *argv[]) {
     printf("lat_iterations      (-i) = %zu\n", args.lat_iterations);
     printf("lat_offset          (-o) = %zu\n", args.lat_offset);
     printf("lat_secondary_delay (-e) = %zu\n", args.lat_secondary_delay);
-    printf("lat_randomize       (-r) = %d\n", args.lat_randomize);
+    const char * lat_randomize_modes[] = { "none", "pair-swap shuffle", "n-way interleaved Hamiltonian chains" };
+    printf("lat_randomize       (-r) = %zu (%s)\n", args.lat_randomize, lat_randomize_modes[args.lat_randomize >= 2 ? 2 : args.lat_randomize]);
     printf("lat_use_hugepages   (-h) = %d (hugepages = %s)\n", args.lat_use_hugepages, hugepage_map(args.lat_use_hugepages));
     printf("lat_shared_memory   (-s) = %d\n", args.lat_shared_memory);
     printf("lat_shared_memory_init_cpu(-u) = %d\n", args.lat_shared_memory_init_cpu);

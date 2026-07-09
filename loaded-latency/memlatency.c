@@ -34,7 +34,10 @@
 #include <stdint.h>
 
 /* lat_initialize can be called from main.c for shared memory */
+
 /*
+ * mode-2: n-pass pointer chain per cacheline
+ *
  * LAT_CHAIN_PASSES - number of independent random passes through the
  * buffer concatenated head-to-tail to form the mode-2 pointer chain.
  *
@@ -47,14 +50,17 @@
  *   pass (PASSES-1) wraps to the first pointer of pass 0. Total
  *   chain length = cacheline_count * LAT_CHAIN_PASSES.
  *
+ * LAT_CHAIN_PASSES is passed in as the randomize parameter value.
+ *
  */
-#define LAT_CHAIN_PASSES 8
 
 typedef struct ptr_s {
     struct ptr_s * next;
 } ptr_t;
 
 /*
+ * mode-1: 1 pointer per cache line
+ *
  * Header layout of the mode-1 node_t (first field only).
  * node_t itself is declared inside lat_initialize() because its trailing
  * pad depends on the runtime cacheline_bytes. node_hdr_t lets helper
@@ -162,7 +168,7 @@ static void ** make_pairswap_chain(void * ptr,
  * cacheline_count * LAT_CHAIN_PASSES.
  */
 static void ** make_multipass_chain(void * ptr,
-    size_t cacheline_count, size_t cacheline_bytes) {
+    size_t cacheline_count, size_t cacheline_bytes, size_t chains) {
 
     size_t * index = malloc(cacheline_count * sizeof(size_t));
     if (index == NULL) {
@@ -174,7 +180,7 @@ static void ** make_multipass_chain(void * ptr,
     ptr_t * first   = NULL;
     ptr_t * current = NULL;
 
-    for (size_t j = 0; j < LAT_CHAIN_PASSES; j++) {
+    for (size_t j = 0; j < chains; j++) {
         make_random_order(index, cacheline_count);
 
         for (size_t i = 0; i < cacheline_count; i++) {
@@ -196,16 +202,16 @@ static void ** make_multipass_chain(void * ptr,
 }
 
 void ** lat_initialize(size_t cacheline_bytes,
-    size_t cacheline_count, int randomize, int clear_cache, size_t cacheline_stride, int use_hugepages) {
+    size_t cacheline_count, size_t randomize, int clear_cache, size_t cacheline_stride, int use_hugepages) {
 
     typedef struct {
         union {
-            void * next;                        /* mode 1: single chain */
-            ptr_t ptrs[LAT_CHAIN_PASSES];   /* mode 2: per-pass chain slots */
+            void * next;             /* mode 1: single chain */
+            ptr_t ptrs[randomize];   /* mode 2: per-pass chain slots */
         };
         char buf[cacheline_bytes
-                 - (sizeof(ptr_t) * LAT_CHAIN_PASSES > sizeof(void *)
-                    ? sizeof(ptr_t) * LAT_CHAIN_PASSES
+                 - (sizeof(ptr_t) * randomize > sizeof(void *)
+                    ? sizeof(ptr_t) * randomize
                     : sizeof(void *))];
     } node_t;
 
@@ -224,9 +230,10 @@ void ** lat_initialize(size_t cacheline_bytes,
     node_t * p = do_alloc(cacheline_bytes * cacheline_count, use_hugepages, cacheline_bytes);
 
     void ** head;
-    if (randomize == 2) {
-        head = make_multipass_chain(p, cacheline_count, cacheline_bytes);
+    if (randomize >= 2) {
+        head = make_multipass_chain(p, cacheline_count, cacheline_bytes, randomize);
     } else {
+        // also for randomize == 0
         head = make_pairswap_chain(p, cacheline_bytes, cacheline_count, cacheline_stride, randomize);
     }
 
@@ -284,7 +291,7 @@ void latency_thread (struct lat_thread_info * lat_tinfo) {
     int cpu                                   = lat_tinfo->cpu;
     unsigned long hwcounter_start             = lat_tinfo->hwcounter_start;
     unsigned long hwcounter_stop              = lat_tinfo->hwcounter_stop;
-    int randomize                             = lat_tinfo->randomize;
+    size_t randomize                          = lat_tinfo->randomize;
     int use_hugepages                         = lat_tinfo->use_hugepages;
     void ** mem                               = lat_tinfo->mem;
     size_t lat_offset                         = lat_tinfo->lat_offset;
@@ -298,6 +305,8 @@ void latency_thread (struct lat_thread_info * lat_tinfo) {
     unsigned long start_tick, stop_tick;
 
     struct timeval t0, t1, tdiff;
+
+    // NOTE: if randomize >= 2, it is the number of chain passes.
 
     // if mem is not NULL, then it has been preinitalized.
 
@@ -315,7 +324,7 @@ void latency_thread (struct lat_thread_info * lat_tinfo) {
     }
     p = run(p, lat_offset / 10);    // advance p to start offset. / 10 because there are 10 deploads per iteration in run()
 
-    printf("CPU%d LATTHREAD%d: cacheline_count = %zu, iterations = %zu, mem = %p, randomize = %d, use_hugepages = %d, hwcounter_start = 0x%zx, lat_offset = %zu, tid = %d\n",
+    printf("CPU%d LATTHREAD%d: cacheline_count = %zu, iterations = %zu, mem = %p, randomize = %zu, use_hugepages = %d, hwcounter_start = 0x%zx, lat_offset = %zu, tid = %d\n",
            cpu, thread_num, cacheline_count, iterations, mem, randomize,
            use_hugepages, hwcounter_start, lat_offset, gettid());
 

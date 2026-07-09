@@ -39,6 +39,8 @@ static const struct {
 
 const size_t num_hugepage_mappings = sizeof(hugepage_mapping) / sizeof(hugepage_mapping[0]);
 
+static int parse_optional_ul_argument(int argc, char ** argv, unsigned long * pretval);
+
 const char * hugepage_map (int enum_param_value) {
     for (size_t i = 0; i < num_hugepage_mappings; i++) {
         if (hugepage_mapping[i].enum_param_value == enum_param_value) {
@@ -109,10 +111,11 @@ static void print_help(void) {
 " -j | --lat-cacheline-stride  count    number of cachelines strided for latency measurement; default 1\n"
 " -o | --lat-offset            count    number of deploads to advance secondary latency threads\n"
 " -c | --lat-clear-cache                clear caches before latency run\n"
-" -r | --lat-randomize                  randomize ordering of dependent loads (mode 1: pair-swap shuffle)\n"
-" -R | --lat-randomize-mode    mode     select randomization mode by number (1, 2, ...)\n"
-"                                       mode 1 = pair-swap shuffle (default for -r)\n"
-"                                       mode 2 = 8-way interleaved Hamiltonian chains\n"
+" -r | --lat-randomize         [chains] randomize ordering of dependent loads, where chains is optionally one of:\n"
+"                                       0 = no randomization\n"
+"                                       n = n-pass Fisher-Yates interleaved Hamiltonian chains\n"
+"                                       if chains is not given, n will be computed from cache line length\n"
+"      --lat-use-pairswap               Use pair-swap shuffle iff --lat-randomize chains > 1\n"
 " -h | --lat-use-hugepages     size     hugepage size to use for latency. Use \"-h help\" to show known sizes\n"
 " -w | --lat-warmup-cpu        cpu_num  on which CPU to warm up latency loop (repeat for additional CPUs)\n"
 " -s | --lat-shared-memory              use the same memory for all latency threads\n"
@@ -171,8 +174,7 @@ void handle_args(int argc, char ** argv, args_t * pargs) {
         {"lat-cacheline-stride",required_argument,  0,      'j'},
         {"lat-offset",          required_argument,  0,      'o'},
         {"lat-clear-cache",     no_argument,        0,      'c'},
-        {"lat-randomize",       no_argument,        0,      'r'},
-        {"lat-randomize-mode",  required_argument,  0,      'R'},
+        {"lat-randomize",       optional_argument,  0,      'r'},
         {"lat-use-hugepages",   required_argument,  0,      'h'},
         {"lat-warmup-cpu",      required_argument,  0,      'w'},
         {"lat-shared-memory",   no_argument,        0,      's'},
@@ -196,7 +198,7 @@ void handle_args(int argc, char ** argv, args_t * pargs) {
 
     while (1) {
 
-        int c = getopt_long(argc, argv, "D:S:d:Qq:f:t:l:n:e:i:z:j:o:crR:h:w:su:B:I:L:F:C:H:Z:W", long_options, NULL);
+        int c = getopt_long(argc, argv, "D:S:d:Qq:f:t:l:n:e:i:z:j:o:cr::h:w:su:B:I:L:F:C:H:Z:W", long_options, NULL);
 
         switch (c) {
 
@@ -311,16 +313,9 @@ void handle_args(int argc, char ** argv, args_t * pargs) {
                 pargs->lat_clear_cache = 1;
                 break;
 
-            case 'r':  // --lat-randomize
+            case 'r':  // --lat-randomize [mode]
                 pargs->lat_randomize = 1;
-                break;
-
-            case 'R':  // --lat-randomize-mode N
-                pargs->lat_randomize = (int) strtol(optarg, NULL, 0);
-                if (pargs->lat_randomize < 0) {
-                    printf("invalid --lat-randomize-mode value: %s\n", optarg);
-                    exit(-1);
-                }
+                parse_optional_ul_argument(argc, argv, &(pargs->lat_randomize));
                 break;
 
             case 'h':  // --lat-use-hugepages hugepage_size_string
@@ -389,4 +384,42 @@ void handle_args(int argc, char ** argv, args_t * pargs) {
 
         }
     }
+}
+
+
+static int parse_optional_ul_argument(int argc, char ** argv, unsigned long * pretval) {
+
+    char * endptr = NULL;
+    char * arg;
+    unsigned long ul_value;
+
+    if (optarg) {
+        // potential unsigned long arg embedded in the flag, e.g. -r2
+#if 0
+        if (*optarg == '\0') {
+            char * flag = argv[optind-1];
+            // e.g., -r (with an empty argument); this shouldn't ever happen
+            printf("Error parsing %s for an unsigned long\n", flag);
+            exit(-1);
+        }
+#endif
+        arg = optarg;
+    } else if (optind < argc && argv[optind][0] != '-') {
+        // e.g. -r 2, but not -r -2, which will be caught earlier by getopt_long
+        arg = argv[optind];
+    } else {
+        return 0;
+    }
+
+    ul_value = strtoul(arg, &endptr, 0);
+
+    if (*endptr != '\0') {
+        char * flag = argv[optind-1];
+        printf("Error parsing %s as an unsigned long for flag %s\n", arg, flag);
+        exit(-1);
+    }
+
+    *pretval = ul_value;
+
+    return 1;
 }
