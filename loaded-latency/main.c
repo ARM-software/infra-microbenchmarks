@@ -292,6 +292,13 @@ int main(int argc, char *argv[]) {
         exit(-1);
     }
 
+    if (args.lat_cacheline_bytes & (args.lat_cacheline_bytes - 1)) {
+        // NOTE: when not using hugepages, lat_cacheline_bytes is given to posix_memalign
+        printf("ERROR: lat_cacheline_bytes needs to be a power-of-2, but it is %zu\n",
+                args.lat_cacheline_bytes);
+        exit(-1);
+    }
+
     void ** mem = NULL;
 
     if (num_lat_threads > 0 && args.lat_shared_memory) {
