@@ -201,8 +201,11 @@ static void ** make_multipass_chain(void * ptr,
     return (void **) first;
 }
 
-void ** lat_initialize(size_t cacheline_bytes,
-    size_t cacheline_count, size_t randomize, int clear_cache, size_t cacheline_stride, int use_hugepages) {
+
+// lat_initialize: returns the entry into the loop and lowest address in *pmem_base
+void ** lat_initialize(size_t cacheline_bytes, size_t cacheline_count,
+        size_t randomize, int clear_cache, size_t cacheline_stride,
+        int use_hugepages, void ** pmem_base) {
 
     typedef struct {
         union {
@@ -228,6 +231,7 @@ void ** lat_initialize(size_t cacheline_bytes,
     }
 
     node_t * p = do_alloc(cacheline_bytes * cacheline_count, use_hugepages, cacheline_bytes);
+    *pmem_base = p;
 
     void ** head;
     if (randomize >= 2) {
@@ -294,6 +298,7 @@ void latency_thread (struct lat_thread_info * lat_tinfo) {
     size_t randomize                          = lat_tinfo->randomize;
     int use_hugepages                         = lat_tinfo->use_hugepages;
     void ** mem                               = lat_tinfo->mem;
+    void * mem_base                           = lat_tinfo->mem_base;
     size_t lat_offset                         = lat_tinfo->lat_offset;
     int lat_clear_cache                       = lat_tinfo->lat_clear_cache;
     int warmup                                = lat_tinfo->warmup;
@@ -310,8 +315,9 @@ void latency_thread (struct lat_thread_info * lat_tinfo) {
 
     // if mem is not NULL, then it has been preinitalized.
 
-    if (mem == NULL) {
-        mem = lat_initialize(cacheline_bytes, cacheline_count, randomize, lat_clear_cache, cacheline_stride, use_hugepages);
+    if (mem_base == NULL) {
+        if (mem != NULL) { printf("mem_base == null but mem != null, unpexpected\n"); exit(-1); }
+        mem = lat_initialize(cacheline_bytes, cacheline_count, randomize, lat_clear_cache, cacheline_stride, use_hugepages, &mem_base);
     }
 
     void ** p = mem;
@@ -361,21 +367,22 @@ void latency_thread (struct lat_thread_info * lat_tinfo) {
 
             size_t this_hwcounter = read_hwcounter();
 
+//#define LAT_DEBUG_CHAIN
 #ifdef LAT_DEBUG_CHAIN
             /*
              * Chain-walk debug. `p` points at a node's ->next field.
              * With the new layout there is no stored index/order, so
              * derive the cacheline index from the buffer base:
              *   line_base = p & ~(cacheline_bytes - 1)
-             *   idx       = (line_base - mem) / cacheline_bytes
+             *   idx       = (line_base - mem_base) / cacheline_bytes
              *   slot      = (p - line_base) / sizeof(void *)
-             * slot is 0 for mode 1 and 0..LAT_CHAIN_PASSES-1 for mode 2.
+             * slot is 0..randomize-1
              */
             uintptr_t pu        = (uintptr_t) p;
             uintptr_t line_base = pu & ~((uintptr_t) cacheline_bytes - 1);
             size_t    slot      = (size_t)((pu - line_base) / sizeof(void *));
-            size_t    current_index = (mem != NULL)
-                ? (size_t)(((char *) line_base - (char *) mem) / cacheline_bytes)
+            size_t    current_index = (mem_base != NULL)
+                ? (size_t)(((char *) line_base - (char *) mem_base) / cacheline_bytes)
                 : (size_t) -1;
 
             printf("CPU%d LATTHREAD%d: %.6f ns, %.6f cycles, "

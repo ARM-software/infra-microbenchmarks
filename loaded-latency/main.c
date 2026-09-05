@@ -308,6 +308,7 @@ int main(int argc, char *argv[]) {
     }
 
     void ** mem = NULL;
+    void * mem_base = NULL;
 
     if (num_lat_threads > 0 && args.lat_shared_memory) {
 
@@ -346,7 +347,7 @@ int main(int argc, char *argv[]) {
         }
 
         mem = lat_initialize(args.lat_cacheline_bytes, args.lat_cacheline_count, args.lat_randomize,
-                args.lat_clear_cache, args.lat_cacheline_stride, args.lat_use_hugepages);
+                args.lat_clear_cache, args.lat_cacheline_stride, args.lat_use_hugepages, &mem_base);
 
         // restore affinity of main thread
         if (0 != sched_setaffinity(0, sizeof(cpu_set_t), &main_thread_cpu_mask)) {
@@ -381,6 +382,7 @@ int main(int argc, char *argv[]) {
             lat_tinfo[lat_thread_num].iterations = args.lat_iterations;
             lat_tinfo[lat_thread_num].cycle_time_ns = args.cycle_time_ns;
             lat_tinfo[lat_thread_num].mem = mem;
+            lat_tinfo[lat_thread_num].mem_base = mem_base;
             lat_tinfo[lat_thread_num].lat_clear_cache = args.lat_clear_cache;
             if (lat_thread_num > 0) {
                 lat_tinfo[lat_thread_num].lat_offset = args.lat_offset;
