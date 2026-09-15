@@ -16,6 +16,7 @@ struct lat_thread_info {
     int           thread_num;
     int           cpu;              // cpu on which this thread is run
     int           randomize;
+    size_t        num_chains;
     int           warmup;
     size_t        cacheline_stride;
     int           use_hugepages;
@@ -33,8 +34,8 @@ struct lat_thread_info {
 };
 
 void ** lat_initialize(size_t cacheline_bytes, size_t cacheline_count,
-        size_t randomize, int clear_cache, size_t cachline_stride,
-        int use_hugepages, void ** pmem_base);
+        size_t randomize, int clear_cache, size_t cacheline_stride,
+        int use_hugepages, void ** pmem_base, size_t num_chains);
 
 void latency_thread (struct lat_thread_info * lat_tinfo);
 

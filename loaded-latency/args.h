@@ -28,6 +28,7 @@ typedef struct {
     size_t    lat_cacheline_count; // default memory size is 1 MiB + 1 cache line
     size_t    lat_iterations;      // (10 x) 10 million iterations
     size_t    lat_randomize;
+    size_t    lat_num_chains;
     int       has_lat_offset;      // set to 1 if lat_offset is a value specified on the command line.
     size_t    lat_offset;          // when multiple latency threads are specified, how many deploads to advance the secondary thread.
     size_t    lat_cacheline_stride;

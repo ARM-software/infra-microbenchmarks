@@ -113,9 +113,8 @@ static void print_help(void) {
 " -c | --lat-clear-cache                clear caches before latency run\n"
 " -r | --lat-randomize         [chains] randomize ordering of dependent loads, where chains is optionally one of:\n"
 "                                       0 = no randomization\n"
-"                                       n = n-pass Fisher-Yates interleaved Hamiltonian chains\n"
-"                                       if chains is not given, n will be computed from cache line length\n"
-"      --lat-use-pairswap               Use pair-swap shuffle iff --lat-randomize chains > 1\n"
+"                                       n = number of interleaved Hamiltonian chains\n"
+"                                       If chains is not given, n will be computed from cache line length.\n"
 " -h | --lat-use-hugepages     size     hugepage size to use for latency. Use \"-h help\" to show known sizes\n"
 " -w | --lat-warmup-cpu        cpu_num  on which CPU to warm up latency loop (repeat for additional CPUs)\n"
 " -s | --lat-shared-memory              use the same memory for all latency threads\n"
@@ -149,7 +148,8 @@ void handle_args(int argc, char ** argv, args_t * pargs) {
         help_val = 1,
         estimate_hwclock_freq_val = 2,
         delay_ticks_val = 3,
-        show_per_thread_concurrency_val = 4
+        show_per_thread_concurrency_val = 4,
+        opt_lat_num_chains,
     };
 
     static struct option long_options[] = {
@@ -179,6 +179,7 @@ void handle_args(int argc, char ** argv, args_t * pargs) {
         {"lat-warmup-cpu",      required_argument,  0,      'w'},
         {"lat-shared-memory",   no_argument,        0,      's'},
         {"lat-shared-memory-init-cpu", required_argument, 0, 'u'},
+        {"lat-num-chains",      required_argument,  0,      opt_lat_num_chains},    // not documented
 
         // bandwidth flags
         {"bw-cpu",              required_argument,  0,      'B'},
@@ -313,9 +314,26 @@ void handle_args(int argc, char ** argv, args_t * pargs) {
                 pargs->lat_clear_cache = 1;
                 break;
 
-            case 'r':  // --lat-randomize [mode]
-                pargs->lat_randomize = 1;
+            case 'r':  // --lat-randomize [chains]
+                pargs->lat_randomize = -1;  // parse_optional_ul_argument() may overwrite this
                 parse_optional_ul_argument(argc, argv, &(pargs->lat_randomize));
+
+                // If an argument value of chains is given, "-r chains", let it
+                // override a previously given value from --lat-num-chains by updating
+                // it here, but only if the value is not 0, because a value of 0 means
+                // disable randomization;  any other value updates lat_num_chains.
+
+                if (pargs->lat_randomize != -1 && pargs->lat_randomize != 0) {
+                    pargs->lat_num_chains = pargs->lat_randomize;
+                }
+
+                break;
+
+            case opt_lat_num_chains:  // --lat-num-chains chains (not documented)
+                // This flag lets the number of chains to be specified without
+                // randomization, and overrides the number from --lat-randomize;
+                // see the code in main().
+                pargs->lat_num_chains = strtoul(optarg, NULL, 0);
                 break;
 
             case 'h':  // --lat-use-hugepages hugepage_size_string

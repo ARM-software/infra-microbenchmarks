@@ -74,6 +74,7 @@ args_t args = {
     .lat_cacheline_count = (1024*1024/64)+1, // default memory size is 1 MiB + 1 cache line for 64 byte cachelines
     .lat_iterations = 10000000,  // (10 x) 10 million iterations
     .lat_randomize = 0,
+    .lat_num_chains = 0,         // 0 = behavior determined in main() depending on lat_randomize
     .has_lat_offset = 0,         // set to 1 if lat_offset is a value specified on the command line.
     .lat_offset = 0,             // when multiple latency threads are specified, how many deploads to advance the secondary thread.
     .lat_cacheline_stride = 1,
@@ -122,7 +123,36 @@ int main(int argc, char *argv[]) {
 
     size_t max_num_hamiltonian_chains = args.lat_cacheline_bytes / sizeof(void *);
 
-    if (args.lat_randomize > max_num_hamiltonian_chains) {
+    if (args.lat_randomize) {
+        if (args.lat_randomize == -1) {
+            // --lat-randomize was given with no number of chains specified, so
+            // use max_num_hamiltonian_chains if --lat-num-chains was not given
+            if (args.lat_num_chains == 0) {
+                args.lat_num_chains = max_num_hamiltonian_chains;
+            }
+        } else {
+            // --lat-randomize was given with a number of chains; the argument
+            // parsing will have set args.lat_num_chains to that value.
+
+            if (args.lat_num_chains == 0) {
+                // --lat-num-chains wasn't given (or was explicitly 0),
+                // but --lat-randomize was given a value, so use it as lat_num_chains.
+                args.lat_num_chains = args.lat_randomize;
+            } else {
+                // --lat-randomize chainsB --lat-num-chains chainsA
+                // synchronize the value chainsA into lat_randomize
+                args.lat_randomize = args.lat_num_chains;
+            }
+        }
+    } else {
+        // if --lat-num-chains is NOT given, and randomize is NOT given, default to 1 chain.
+        // This lets multiple chains to be specified without randomization.
+        if (args.lat_num_chains == 0) {
+            args.lat_num_chains = 1;
+        }
+    }
+
+    if (args.lat_num_chains > max_num_hamiltonian_chains) {
         printf("ERROR: --lat-randomize chains=%zu exceeds cacheline length --lat-cacheline-bytes=%zu\n",
             args.lat_randomize, args.lat_cacheline_bytes);
         exit(-1);
@@ -224,8 +254,10 @@ int main(int argc, char *argv[]) {
     printf("lat_iterations      (-i) = %zu\n", args.lat_iterations);
     printf("lat_offset          (-o) = %zu\n", args.lat_offset);
     printf("lat_secondary_delay (-e) = %zu\n", args.lat_secondary_delay);
-    const char * lat_randomize_modes[] = { "none", "pair-swap shuffle", "n-way interleaved Hamiltonian chains" };
-    printf("lat_randomize       (-r) = %zu (%s)\n", args.lat_randomize, lat_randomize_modes[args.lat_randomize >= 2 ? 2 : args.lat_randomize]);
+    printf("lat_randomize       (-r) = %ld %s\n", args.lat_randomize,
+            args.lat_randomize == 0 ? "(no randomization)" :
+            args.lat_randomize == -1 ? "(randomize, use lat_num_chains chains)" : "chains, randomized");
+    printf("lat_num_chains           = %zu chains\n", args.lat_num_chains);
     printf("lat_use_hugepages   (-h) = %d (hugepages = %s)\n", args.lat_use_hugepages, hugepage_map(args.lat_use_hugepages));
     printf("lat_shared_memory   (-s) = %d\n", args.lat_shared_memory);
     printf("lat_shared_memory_init_cpu(-u) = %d\n", args.lat_shared_memory_init_cpu);
@@ -295,11 +327,6 @@ int main(int argc, char *argv[]) {
         exit(-1);
     }
 
-    if (args.lat_cacheline_stride == args.lat_cacheline_count && args.lat_randomize) {
-        printf("ERROR: lat_cacheline_stride == cacheline_count but with randomize = 1, can't do this\n");
-        exit(-1);
-    }
-
     if (args.lat_cacheline_bytes & (args.lat_cacheline_bytes - 1)) {
         // NOTE: when not using hugepages, lat_cacheline_bytes is given to posix_memalign
         printf("ERROR: lat_cacheline_bytes needs to be a power-of-2, but it is %zu\n",
@@ -347,7 +374,7 @@ int main(int argc, char *argv[]) {
         }
 
         mem = lat_initialize(args.lat_cacheline_bytes, args.lat_cacheline_count, args.lat_randomize,
-                args.lat_clear_cache, args.lat_cacheline_stride, args.lat_use_hugepages, &mem_base);
+                args.lat_clear_cache, args.lat_cacheline_stride, args.lat_use_hugepages, &mem_base, args.lat_num_chains);
 
         // restore affinity of main thread
         if (0 != sched_setaffinity(0, sizeof(cpu_set_t), &main_thread_cpu_mask)) {
@@ -376,6 +403,7 @@ int main(int argc, char *argv[]) {
             }
             lat_tinfo[lat_thread_num].cacheline_stride = args.lat_cacheline_stride;
             lat_tinfo[lat_thread_num].randomize = args.lat_randomize;
+            lat_tinfo[lat_thread_num].num_chains = args.lat_num_chains;
             lat_tinfo[lat_thread_num].use_hugepages = args.lat_use_hugepages;
             lat_tinfo[lat_thread_num].lat_cacheline_bytes = args.lat_cacheline_bytes;
             lat_tinfo[lat_thread_num].cacheline_count = args.lat_cacheline_count;

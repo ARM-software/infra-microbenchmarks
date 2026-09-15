@@ -47,7 +47,10 @@ latency flags:
  -j | --lat-cacheline-stride  count    number of cachelines strided for latency measurement; default 1
  -o | --lat-offset            count    number of deploads to advance secondary latency threads
  -c | --lat-clear-cache                clear caches before latency run
- -r | --lat-randomize                  randomize ordering of dependent loads
+ -r | --lat-randomize         [chains] randomize ordering of dependent loads, where chains is optionally one of:
+                                       0 = no randomization
+                                       n = number of interleaved Hamiltonian chains
+                                       If chains is not given, n will be computed from cache line length.
  -h | --lat-use-hugepages     size     hugepage size to use for latency. Use "-h help" to show known sizes
  -w | --lat-warmup-cpu        cpu_num  on which CPU to warm up latency loop (repeat for additional CPUs)
  -s | --lat-shared-memory              use the same memory for all latency threads
