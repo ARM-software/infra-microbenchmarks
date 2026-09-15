@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <stddef.h>
 #include <errno.h>
 #include <ctype.h>
 #include <math.h>
@@ -240,6 +241,59 @@ void ** lat_initialize(size_t cacheline_bytes, size_t cacheline_count,
         // also for randomize == 0
         head = make_pairswap_chain(p, cacheline_bytes, cacheline_count, cacheline_stride, randomize);
     }
+
+//#define LAT_INITIALIZE_POINTER_DEBUG
+#ifdef LAT_INITIALIZE_POINTER_DEBUG
+    // examine pointer chain
+    {
+        long diff_sum = 0;
+        size_t num_pointers = cacheline_count / cacheline_stride;
+
+        if (cacheline_count % cacheline_stride) {
+            num_pointers++;
+        }
+
+        // randomize contains the number of chains
+        if (randomize) { num_pointers *= randomize; }
+
+        // head points to a node_t that is the entry into the loop of pointers.
+
+        printf("head = %p, num_pointers = %zu\n", head, num_pointers);
+
+#if 0
+        printf("*head = head->next = head->ptrs[0].next = %p %p %p\n",
+             *head, ((node_t *) head)->next, ((node_t *) head)->ptrs[0].next);
+        // *head:  abuse the fact that the .next is at the beginning of node_t
+        // ((node_t *) head)->next: cast head to a node_t and expect next to be at the beginning of it
+        // ((node_t *) head)->ptrs[0].next: explicitly get the multichain ptrs[0].next
+        // all of the above should give the same address of the next node_t.
+#endif
+
+        ptr_t * ppp = (ptr_t *) head;
+
+        for (size_t i = 0; i < num_pointers; i++) {
+            ssize_t delta = (ppp->next - ppp) * sizeof(void *); // signed bytes
+            diff_sum += labs(delta);
+            printf("%zu:\t%p\tnext = %p\t%zd\n", i, ppp, ppp->next, delta);
+            ppp = ppp->next;
+            if (ppp == (ptr_t *) head && i < num_pointers - 1) {
+                printf("ERROR: i = %zu, num_pointers = %zu, but already ppp == head. Unexpectedly walked a cycle early?\n", i, num_pointers);
+            }
+        }
+
+        double avg_diff = (double) diff_sum / num_pointers;
+        printf("diff_sum = %ld, num_pointers = %zu, avg_diff = %f\n", diff_sum, num_pointers, avg_diff);
+
+        if (ppp != (ptr_t *) head) {
+            // expect that num_pointers walks through a cycle
+            printf("ERROR: ppp does not match head!\n");
+            printf("ppp = %p, head = %p\n", ppp, head);
+            exit(-1);
+        }
+
+        exit(0);
+    }
+#endif
 
     if (clear_cache) {
         __builtin___clear_cache((char *) p, (char *) p + cacheline_bytes * cacheline_count);
