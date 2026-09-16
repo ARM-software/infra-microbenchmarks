@@ -33,7 +33,7 @@ LATENCY_FLAGS+="-n $(((200*1000000)/64)) "
 # Latency: Print latency every 100000 iterations of latency loop (i.e., every 1000000 deploads)
 LATENCY_FLAGS+="-i 100000 "
 
-# Latency: Randomize pointer loop to defeat hardware prefetch
+# Latency: Randomize pointer loop to impede hardware prefetch
 LATENCY_FLAGS+="-r "
 
 # Latency: Allocate memory using hugepages (do sudo hugeadm --pool-pages-max DEFAULT:+1000 before running)
