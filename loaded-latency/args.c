@@ -106,7 +106,7 @@ static void print_help(void) {
 " -e | --lat-secondary-delay   ticks    how many additional ticks for secondary latency threads to start\n"
 " -i | --lat-iterations        iters    number of iterations between latency measurement interim reports\n"
 " -z | --lat-cacheline-bytes   bytes    cacheline length for latency measurement\n"
-" -j | --lat-cacheline-stride  count    number of cachelines to skip between loads for latency measurement\n"
+" -j | --lat-cacheline-stride  count    number of cachelines strided for latency measurement; default 1\n"
 " -o | --lat-offset            count    number of deploads to advance secondary latency threads\n"
 " -c | --lat-clear-cache                clear caches before latency run\n"
 " -r | --lat-randomize                  randomize ordering of dependent loads (mode 1: pair-swap shuffle)\n"
@@ -298,7 +298,7 @@ void handle_args(int argc, char ** argv, args_t * pargs) {
                 pargs->lat_cacheline_bytes = strtoul(optarg, NULL, 0);
                 break;
 
-            case 'j':  // --lat-cacheline-stride count : number of cachelines to skip between loads for latency measurement
+            case 'j':  // --lat-cacheline-stride count : number of cachelines strided for latency measurement; default 1
                 pargs->lat_cacheline_stride = strtoul(optarg, NULL, 0);
                 break;
 
