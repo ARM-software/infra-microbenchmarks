@@ -208,10 +208,19 @@ void handle_args(int argc, char ** argv, args_t * pargs) {
                 break;
 
          // ---- general flags ------------------------------------------------------------------------------
-            case help_val:
+            case help_val:  // --help
+                print_help();   // does not return
+                break;
+
             case '?':
+                // error identified by getopt_long, e.g. unrecognized flag, which prints an error message
+                fprintf(stderr, "use --help to show help screen\n");
+                exit(-1);
+                break;
+
             default:
-                print_help();  // does not return
+                printf("UNEXPECTED ERROR in parsing, optopt = %c, optind = %d, c = %c (dec %d)\n", optopt, optind, c, c);
+                exit(-1);
                 break;
 
             case 'D':  // --duration seconds    : how many seconds to run
