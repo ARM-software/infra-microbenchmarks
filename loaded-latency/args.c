@@ -197,14 +197,18 @@ void handle_args(int argc, char ** argv, args_t * pargs) {
 
     long cpu;
 
-    while (1) {
+    int parsing_done = 0;
+    int found_flag_error = 0;
+
+    while (! parsing_done) {
 
         int c = getopt_long(argc, argv, "D:S:d:Qq:f:t:l:n:e:i:z:j:o:cr::h:w:su:B:I:L:F:C:H:Z:W", long_options, NULL);
 
         switch (c) {
 
             case -1:    // all command line parameters have been parsed
-                return;
+                parsing_done = 1;
+                break;
 
             case 0:
                 // getopt_long() set the value through *flag
@@ -217,8 +221,7 @@ void handle_args(int argc, char ** argv, args_t * pargs) {
 
             case '?':
                 // error identified by getopt_long, e.g. unrecognized flag, which prints an error message
-                fprintf(stderr, "use --help to show help screen\n");
-                exit(-1);
+                found_flag_error = 1;
                 break;
 
             default:
@@ -401,6 +404,11 @@ void handle_args(int argc, char ** argv, args_t * pargs) {
                 break;
 
         }
+    }
+
+    if (found_flag_error) {
+        fprintf(stderr, "use --help to show help screen\n");
+        exit(-1);
     }
 }
 
