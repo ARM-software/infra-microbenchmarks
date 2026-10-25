@@ -33,48 +33,12 @@
 #include "memlatency.h"
 
 #include <stdint.h>
+#include <assert.h>
 
 /* lat_initialize can be called from main.c for shared memory */
 
 /*
- * mode-2: n-pass pointer chain per cacheline
- *
- * LAT_CHAIN_PASSES - number of independent random passes through the
- * buffer concatenated head-to-tail to form the mode-2 pointer chain.
- *
- * Algorithm (make_multipass_chain):
- *   Each pass j produces one Hamiltonian cycle through all cachelines
- *   using slot j of the per-cacheline pointer array. The cacheline
- *   visitation order within each pass is an independent Fisher-Yates
- *   shuffle. Passes are concatenated so the last pointer of pass j
- *   links to the first pointer of pass j+1, and the last pointer of
- *   pass (PASSES-1) wraps to the first pointer of pass 0. Total
- *   chain length = cacheline_count * LAT_CHAIN_PASSES.
- *
- */
-
-typedef struct ptr_s {
-    struct ptr_s * next;
-} ptr_t;
-
-/*
- * mode-1: 1 pointer per cache line
- *
- * Header layout of the mode-1 node_t (first field only).
- * node_t itself is declared inside lat_initialize() because its trailing
- * pad depends on the runtime cacheline_bytes. node_hdr_t lets helper
- * functions access ->next without seeing the local typedef.
- */
-typedef struct {
-    void * next;
-} node_hdr_t;
-
-#define NODE_HDR(base, i, cbytes) \
-    ((node_hdr_t *)((char *)(base) + (i) * (cbytes)))
-
-/*
  * Generate a random permutation of [0, count) using Fisher-Yates.
- * Matches mode 1 style: size_t indices, lrand48().
  */
 static void make_random_order(size_t * index, size_t count) {
     size_t * selection = malloc(count * sizeof(size_t));
@@ -98,14 +62,32 @@ static void make_random_order(size_t * index, size_t count) {
     free(selection);
 }
 
+typedef struct ptr_s {
+    struct ptr_s * next;
+} ptr_t;
 
 /*
- * Mode 2: build LAT_CHAIN_PASSES independent Hamiltonian cycles,
+ * n-pass pointer chain per cacheline
+ *
+ * LAT_CHAIN_PASSES - number of independent random passes through the
+ * buffer concatenated head-to-tail to form the pointer chain.
+ *
+ * Algorithm (make_multipass_chain):
+ *   Each pass j produces one Hamiltonian cycle through all cachelines
+ *   using slot j of the per-cacheline pointer array. The cacheline
+ *   visitation order within each pass is an independent Fisher-Yates
+ *   shuffle. Passes are concatenated so the last pointer of pass j
+ *   links to the first pointer of pass j+1, and the last pointer of
+ *   pass (PASSES-1) wraps to the first pointer of pass 0. Total
+ *   chain length = cacheline_count * LAT_CHAIN_PASSES.
+ *
+ */
+
+/*
+ * Build LAT_CHAIN_PASSES independent Hamiltonian cycles,
  * each using slot j of every cacheline. Cycles are concatenated
  * head-to-tail to form one closed loop of length
- * cacheline_count * LAT_CHAIN_PASSES.
- *
- * (Mode 1 referred to single chain pairswap which is now removed.)
+ * cacheline_count / cacheline_stride * LAT_CHAIN_PASSES.
  */
 static void ** make_multipass_chain(void * ptr, size_t cacheline_bytes, size_t cacheline_count,
                size_t cacheline_stride, size_t LAT_CHAIN_PASSES, int do_randomize) {
@@ -164,10 +146,7 @@ void ** lat_initialize(size_t cacheline_bytes, size_t cacheline_count,
         int use_hugepages, void ** pmem_base, size_t num_chains) {
 
     typedef struct {
-        union {
-            void * next;             /* mode 1: single chain */
-            ptr_t ptrs[num_chains];  /* mode 2: per-pass chain slots */
-        };
+        ptr_t ptrs[num_chains];    /* per-pass chain slots */
         char buf[cacheline_bytes
                  - (sizeof(ptr_t) * num_chains > sizeof(void *)
                     ? sizeof(ptr_t) * num_chains
@@ -189,6 +168,7 @@ void ** lat_initialize(size_t cacheline_bytes, size_t cacheline_count,
     node_t * p = do_alloc(cacheline_bytes * cacheline_count, use_hugepages, cacheline_bytes);
     *pmem_base = p;
 
+    // LAT_CHAIN_PASSES = num_chains
     void ** head = make_multipass_chain(p, cacheline_bytes, cacheline_count, cacheline_stride, num_chains, do_randomize);
 
 //#define LAT_INITIALIZE_POINTER_DEBUG
