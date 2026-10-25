@@ -153,8 +153,8 @@ int main(int argc, char *argv[]) {
     }
 
     if (args.lat_num_chains > max_num_hamiltonian_chains) {
-        printf("ERROR: --lat-randomize chains=%zu exceeds cacheline length --lat-cacheline-bytes=%zu\n",
-            args.lat_randomize, args.lat_cacheline_bytes);
+        printf("ERROR: number of chains=%zu exceeds cacheline length --lat-cacheline-bytes=%zu\n",
+            args.lat_num_chains, args.lat_cacheline_bytes);
         exit(-1);
     }
 
