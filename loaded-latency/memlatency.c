@@ -153,6 +153,16 @@ void ** lat_initialize(size_t cacheline_bytes, size_t cacheline_count,
                     : sizeof(void *))];
     } node_t;
 
+
+    // node_t represents the layout in a cache line
+
+#if 0
+    printf("sizeof(node_t) = %zu\n", sizeof(node_t));
+    printf("cacheline_bytes = %zu\n", cacheline_bytes);
+#endif
+
+    assert(sizeof(node_t) == cacheline_bytes);
+
     // check that sizeof(node_t) == cacheline_bytes // XXX: might not be on 32-bit
     if (sizeof(node_t) != cacheline_bytes) {
         printf("in lat_setup, sizeof(node_t) = %zu, does not equal cacheline_bytes = %zu\n",
