@@ -39,6 +39,8 @@ static const struct {
 
 const size_t num_hugepage_mappings = sizeof(hugepage_mapping) / sizeof(hugepage_mapping[0]);
 
+static int parse_optional_ul_argument(int argc, char ** argv, unsigned long * pretval);
+
 const char * hugepage_map (int enum_param_value) {
     for (size_t i = 0; i < num_hugepage_mappings; i++) {
         if (hugepage_mapping[i].enum_param_value == enum_param_value) {
@@ -106,10 +108,13 @@ static void print_help(void) {
 " -e | --lat-secondary-delay   ticks    how many additional ticks for secondary latency threads to start\n"
 " -i | --lat-iterations        iters    number of iterations between latency measurement interim reports\n"
 " -z | --lat-cacheline-bytes   bytes    cacheline length for latency measurement\n"
-" -j | --lat-cacheline-stride  count    number of cachelines to skip between loads for latency measurement\n"
+" -j | --lat-cacheline-stride  count    number of cachelines strided for latency measurement; default 1\n"
 " -o | --lat-offset            count    number of deploads to advance secondary latency threads\n"
 " -c | --lat-clear-cache                clear caches before latency run\n"
-" -r | --lat-randomize                  randomize ordering of dependent loads\n"
+" -r | --lat-randomize         [chains] randomize ordering of dependent loads, where chains is optionally one of:\n"
+"                                       0 = no randomization\n"
+"                                       n = number of interleaved Hamiltonian chains\n"
+"                                       If chains is not given, n will be computed from cache line length.\n"
 " -h | --lat-use-hugepages     size     hugepage size to use for latency. Use \"-h help\" to show known sizes\n"
 " -w | --lat-warmup-cpu        cpu_num  on which CPU to warm up latency loop (repeat for additional CPUs)\n"
 " -s | --lat-shared-memory              use the same memory for all latency threads\n"
@@ -143,7 +148,8 @@ void handle_args(int argc, char ** argv, args_t * pargs) {
         help_val = 1,
         estimate_hwclock_freq_val = 2,
         delay_ticks_val = 3,
-        show_per_thread_concurrency_val = 4
+        show_per_thread_concurrency_val = 4,
+        opt_lat_num_chains,
     };
 
     static struct option long_options[] = {
@@ -168,11 +174,12 @@ void handle_args(int argc, char ** argv, args_t * pargs) {
         {"lat-cacheline-stride",required_argument,  0,      'j'},
         {"lat-offset",          required_argument,  0,      'o'},
         {"lat-clear-cache",     no_argument,        0,      'c'},
-        {"lat-randomize",       no_argument,        0,      'r'},
+        {"lat-randomize",       optional_argument,  0,      'r'},
         {"lat-use-hugepages",   required_argument,  0,      'h'},
         {"lat-warmup-cpu",      required_argument,  0,      'w'},
         {"lat-shared-memory",   no_argument,        0,      's'},
         {"lat-shared-memory-init-cpu", required_argument, 0, 'u'},
+        {"lat-num-chains",      required_argument,  0,      opt_lat_num_chains},    // not documented
 
         // bandwidth flags
         {"bw-cpu",              required_argument,  0,      'B'},
@@ -192,7 +199,7 @@ void handle_args(int argc, char ** argv, args_t * pargs) {
 
     while (1) {
 
-        int c = getopt_long(argc, argv, "D:S:d:Qq:f:t:l:n:e:i:z:j:o:crh:w:su:B:I:L:F:C:H:Z:W", long_options, NULL);
+        int c = getopt_long(argc, argv, "D:S:d:Qq:f:t:l:n:e:i:z:j:o:cr::h:w:su:B:I:L:F:C:H:Z:W", long_options, NULL);
 
         switch (c) {
 
@@ -204,10 +211,19 @@ void handle_args(int argc, char ** argv, args_t * pargs) {
                 break;
 
          // ---- general flags ------------------------------------------------------------------------------
-            case help_val:
+            case help_val:  // --help
+                print_help();   // does not return
+                break;
+
             case '?':
+                // error identified by getopt_long, e.g. unrecognized flag, which prints an error message
+                fprintf(stderr, "use --help to show help screen\n");
+                exit(-1);
+                break;
+
             default:
-                print_help();  // does not return
+                printf("UNEXPECTED ERROR in parsing, optopt = %c, optind = %d, c = %c (dec %d)\n", optopt, optind, c, c);
+                exit(-1);
                 break;
 
             case 'D':  // --duration seconds    : how many seconds to run
@@ -285,7 +301,7 @@ void handle_args(int argc, char ** argv, args_t * pargs) {
                 pargs->lat_cacheline_bytes = strtoul(optarg, NULL, 0);
                 break;
 
-            case 'j':  // --lat-cacheline-stride count : number of cachelines to skip between loads for latency measurement
+            case 'j':  // --lat-cacheline-stride count : number of cachelines strided for latency measurement; default 1
                 pargs->lat_cacheline_stride = strtoul(optarg, NULL, 0);
                 break;
 
@@ -298,8 +314,26 @@ void handle_args(int argc, char ** argv, args_t * pargs) {
                 pargs->lat_clear_cache = 1;
                 break;
 
-            case 'r':  // --lat-randomize
-                pargs->lat_randomize = 1;
+            case 'r':  // --lat-randomize [chains]
+                pargs->lat_randomize = -1;  // parse_optional_ul_argument() may overwrite this
+                parse_optional_ul_argument(argc, argv, &(pargs->lat_randomize));
+
+                // If an argument value of chains is given, "-r chains", let it
+                // override a previously given value from --lat-num-chains by updating
+                // it here, but only if the value is not 0, because a value of 0 means
+                // disable randomization;  any other value updates lat_num_chains.
+
+                if (pargs->lat_randomize != -1 && pargs->lat_randomize != 0) {
+                    pargs->lat_num_chains = pargs->lat_randomize;
+                }
+
+                break;
+
+            case opt_lat_num_chains:  // --lat-num-chains chains (not documented)
+                // This flag lets the number of chains to be specified without
+                // randomization, and overrides the number from --lat-randomize;
+                // see the code in main().
+                pargs->lat_num_chains = strtoul(optarg, NULL, 0);
                 break;
 
             case 'h':  // --lat-use-hugepages hugepage_size_string
@@ -368,4 +402,42 @@ void handle_args(int argc, char ** argv, args_t * pargs) {
 
         }
     }
+}
+
+
+static int parse_optional_ul_argument(int argc, char ** argv, unsigned long * pretval) {
+
+    char * endptr = NULL;
+    char * arg;
+    unsigned long ul_value;
+
+    if (optarg) {
+        // potential unsigned long arg embedded in the flag, e.g. -r2
+#if 0
+        if (*optarg == '\0') {
+            char * flag = argv[optind-1];
+            // e.g., -r (with an empty argument); this shouldn't ever happen
+            printf("Error parsing %s for an unsigned long\n", flag);
+            exit(-1);
+        }
+#endif
+        arg = optarg;
+    } else if (optind < argc && argv[optind][0] != '-') {
+        // e.g. -r 2, but not -r -2, which will be caught earlier by getopt_long
+        arg = argv[optind];
+    } else {
+        return 0;
+    }
+
+    ul_value = strtoul(arg, &endptr, 0);
+
+    if (*endptr != '\0') {
+        char * flag = argv[optind-1];
+        printf("Error parsing %s as an unsigned long for flag %s\n", arg, flag);
+        exit(-1);
+    }
+
+    *pretval = ul_value;
+
+    return 1;
 }

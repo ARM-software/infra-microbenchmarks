@@ -44,10 +44,13 @@ latency flags:
  -e | --lat-secondary-delay   ticks    how many additional ticks for secondary latency threads to start
  -i | --lat-iterations        iters    number of iterations between latency measurement interim reports
  -z | --lat-cacheline-bytes   bytes    cacheline length for latency measurement
- -j | --lat-cacheline-stride  count    number of cachelines to skip between loads for latency measurement
+ -j | --lat-cacheline-stride  count    number of cachelines strided for latency measurement; default 1
  -o | --lat-offset            count    number of deploads to advance secondary latency threads
  -c | --lat-clear-cache                clear caches before latency run
- -r | --lat-randomize                  randomize ordering of dependent loads
+ -r | --lat-randomize         [chains] randomize ordering of dependent loads, where chains is optionally one of:
+                                       0 = no randomization
+                                       n = number of interleaved Hamiltonian chains
+                                       If chains is not given, n will be computed from cache line length.
  -h | --lat-use-hugepages     size     hugepage size to use for latency. Use "-h help" to show known sizes
  -w | --lat-warmup-cpu        cpu_num  on which CPU to warm up latency loop (repeat for additional CPUs)
  -s | --lat-shared-memory              use the same memory for all latency threads
@@ -293,10 +296,10 @@ The amount of memory that the latency loop spans over is specified by the
 
   - The stride between pointers can be increased using the
     --lat-cacheline-stride flag with values greater than 1.  The default
-    value is 1, which means the cache lines are sequentially addressed.
+    value is 1, which means the cache lines are adjacently placed.
 
   - Note that --lat-cacheline-count is misleadingly named because it assumes
-    the pointers are placed in sequentially addressed cachelines (the
+    the pointers are placed in contiguously addressed cachelines (the
     default).  If the stride is greater than 1, then the number of
     cachelines used in the loop is reduced because some are skipped because
     the span of memory covered by the loop is not reduced (other than the

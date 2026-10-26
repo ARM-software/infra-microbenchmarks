@@ -9,6 +9,7 @@
 #include <sys/mman.h>
 #include <linux/mman.h>
 #include <string.h>
+#include <errno.h>
 
 #include "alloc.h"
 
@@ -56,13 +57,30 @@ void * do_alloc(size_t length, int use_hugepages, size_t nonhuge_alignment) {
         return mmap_ret;
     }
 
+
+    // posix_memalign() requires the alignment to be a power of two
+    // and a multiple of sizeof(void*).
+
+    size_t memalign_alignment = nonhuge_alignment;
+
+    if (memalign_alignment < sizeof(void *)) {
+        memalign_alignment = sizeof(void *);
+    }
+
+    if (memalign_alignment & (memalign_alignment - 1)) {
+        // round up to next power-of-2
+        memalign_alignment = 1ULL << (64 - __builtin_clzll(memalign_alignment - 1));
+    }
+
+#define handle_error_en(en, msg) \
+    do { errno = en; perror(msg); exit(EXIT_FAILURE); } while (0)
+
     void * p;
 
-    int ret = posix_memalign((void **) &p, nonhuge_alignment, length);
+    int ret = posix_memalign((void **) &p, memalign_alignment, length);
 
     if (ret) {
-        printf("posix_memalign returned %d, exiting\n", ret);
-        exit(-1);
+        handle_error_en(ret, "posix_memalign");
     }
 
     // prefault
