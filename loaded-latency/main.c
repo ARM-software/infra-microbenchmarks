@@ -153,10 +153,12 @@ int main(int argc, char *argv[]) {
     }
 
     if (args.lat_num_chains > max_num_hamiltonian_chains) {
-        printf("ERROR: --lat-randomize chains=%zu exceeds cacheline length --lat-cacheline-bytes=%zu\n",
-            args.lat_randomize, args.lat_cacheline_bytes);
+        printf("ERROR: number of chains=%zu exceeds cacheline length --lat-cacheline-bytes=%zu\n",
+            args.lat_num_chains, args.lat_cacheline_bytes);
         exit(-1);
     }
+
+    int do_randomize = !!args.lat_randomize;
 
     int num_bw_threads = 0;
     int num_lat_threads = 0;
@@ -373,7 +375,8 @@ int main(int argc, char *argv[]) {
             handle_error("sched_setaffinity");
         }
 
-        mem = lat_initialize(args.lat_cacheline_bytes, args.lat_cacheline_count, args.lat_randomize,
+
+        mem = lat_initialize(args.lat_cacheline_bytes, args.lat_cacheline_count, do_randomize,
                 args.lat_clear_cache, args.lat_cacheline_stride, args.lat_use_hugepages, &mem_base, args.lat_num_chains);
 
         // restore affinity of main thread
@@ -402,7 +405,7 @@ int main(int argc, char *argv[]) {
                 lat_tinfo[lat_thread_num].warmup = 0;
             }
             lat_tinfo[lat_thread_num].cacheline_stride = args.lat_cacheline_stride;
-            lat_tinfo[lat_thread_num].randomize = args.lat_randomize;
+            lat_tinfo[lat_thread_num].do_randomize = do_randomize;
             lat_tinfo[lat_thread_num].num_chains = args.lat_num_chains;
             lat_tinfo[lat_thread_num].use_hugepages = args.lat_use_hugepages;
             lat_tinfo[lat_thread_num].lat_cacheline_bytes = args.lat_cacheline_bytes;
