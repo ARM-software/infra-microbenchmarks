@@ -92,6 +92,8 @@ typedef struct ptr_s {
 static void ** make_multipass_chain(void * ptr, size_t cacheline_bytes, size_t cacheline_count,
                size_t cacheline_stride, size_t LAT_CHAIN_PASSES, int do_randomize) {
 
+    assert(cacheline_stride > 0);   // should already be caught in main()
+
     // scale down cacheline_count by the stride;  placement is scaled up by stride in the inner loop below
     size_t count = cacheline_count / cacheline_stride;
 
